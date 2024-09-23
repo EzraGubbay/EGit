@@ -4,6 +4,7 @@ import hashlib
 GIT_DIR = '.egit'
 OBJ_DIR = os.path.join(GIT_DIR, 'objects')
 REF_DIR = os.path.join(GIT_DIR, 'refs')
+HEAD = os.path.join(GIT_DIR, 'HEAD')
 OBJ_TYPES = {
     'blob': '100644',
     'tree': '040000'
@@ -14,8 +15,11 @@ COLORS = {
 }
 
 def init():
+    exists = False
     if os.path.isdir(GIT_DIR):
         shutil.rmtree(GIT_DIR)
+        exists = True
+
     # create directories
     os.makedirs(GIT_DIR)
     os.makedirs(os.path.join(OBJ_DIR))
@@ -24,8 +28,10 @@ def init():
     os.makedirs(os.path.join(REF_DIR, 'tags'))
 
     # create files
-    with open(os.path.join(GIT_DIR, 'HEAD'), 'w') as f:
-        pass
+    update_head("master")
+
+    # Print appropriate message to console
+    sys.stdout.write(f'{"Rei" if exists else "I"}nitialized empty repository in {os.getcwd()}/{GIT_DIR}\n')
 
 def hash_object(filetype, data, write=False):
 
@@ -77,8 +83,7 @@ def get_object_content(oid):
 
     return content
 
-
-
+# Prints to stdout the contents of the provided object.
 def cat_file(args):
     try:
         data = get_object(args.object)
@@ -94,6 +99,7 @@ def cat_file(args):
     elif args.t:
         sys.stdout.buffer.write(header[0] + '\n'.encode())
 
+# Returns the list of ignored files as recorded in the .egitignore file.
 def get_ignore_list():
     try:
         with open('.egitignore', 'rb') as f:
@@ -108,11 +114,14 @@ def rmobj(oid):
     sys.stdout.flush()
     sys.stdout.buffer.write(f"Removed object: {oid}\n".encode())
 
+# Changes the object ID of the provided reference to the provided value. If the reference does not exist,
+# it creates one.
 def update_ref(ref, oid):
     ref_path = os.path.join(GIT_DIR, ref)
     with open(ref_path, 'w') as f:
         f.write(f'{oid}\n')
 
+# Returns the object ID associated with the provided reference (if it exists, else None).
 def get_ref(ref):
     ref_path = os.path.join(GIT_DIR, ref)
     if os.path.exists(ref_path):
@@ -121,6 +130,21 @@ def get_ref(ref):
     else:
         return None
 
+# Returns the reference path to the current project commit under HEAD
+def get_head():
+    with open(HEAD, 'r') as f:
+        return f.read().split(' ')[1].strip()
+
+# Updates the reference path to the HEAD commit to the provided value.
+def update_head(ref):
+    with open(HEAD, 'w') as f:
+        f.write(f'ref: refs/heads/{ref}\n')
+
+def new_branch(name):
+    head_oid = get_ref(get_head())
+    update_ref(f'refs/heads/{name}', head_oid)
+
+# Iterates over all references (heads and tags) and yields each.
 def iter_refs():
     for ref in os.listdir(os.path.join(REF_DIR, 'heads')):
         with open(os.path.join(REF_DIR, 'heads', ref), 'r') as f:
@@ -130,6 +154,7 @@ def iter_refs():
         with open(os.path.join(REF_DIR, 'tags', ref), 'r') as f:
             yield f.read().strip(), f'refs/tags/{ref}'
 
+# Prints list of all references (heads and tags) and their associated object IDs
 def show_ref():
     for oid, ref in iter_refs():
         print(oid, ref)

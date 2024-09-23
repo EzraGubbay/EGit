@@ -1,12 +1,11 @@
 import argparse
-import os
 import subprocess
 from dotenv import load_dotenv
 import data
 import base
 import textwrap
 
-from base import iter_commits_and_parents
+from base import iter_commits_and_parents, get_oid
 
 
 def main():
@@ -58,12 +57,16 @@ def parse_args():
 
     checkout_parser = commands.add_parser('checkout')
     checkout_parser.set_defaults(func=checkout)
-    checkout_parser.add_argument('commit', type=oid)
+    checkout_parser.add_argument('commit')
 
     tag_parser = commands.add_parser('tag')
     tag_parser.set_defaults(func=tag)
     tag_parser.add_argument('tagname')
     tag_parser.add_argument('commit')
+
+    branch_parser = commands.add_parser('branch')
+    branch_parser.set_defaults(func=branch)
+    branch_parser.add_argument('name')
 
     show_ref_parser = commands.add_parser('show-ref')
     show_ref_parser.set_defaults(func=show_ref)
@@ -82,7 +85,6 @@ def tester(args):
 
 def init(args):
     data.init()
-    print(f"Initialized empty repository in {os.getcwd()}/{data.GIT_DIR}")
 
 def hash_object(args):
     with open(args.file, 'rb') as f:
@@ -104,6 +106,7 @@ def commit(args):
     print(base.commit(args.message))
 
 def log(args):
+    #oid_set = base.get_oid({args.object})
     for oid in iter_commits_and_parents({args.object}):
         commit = base.get_commit(oid)
         print(f'{data.COLORS["YELLOW"]}commit {oid}{data.COLORS["RESET"]}')
@@ -117,6 +120,9 @@ def checkout(args):
 def tag(args):
     base.tag(args.tagname, args.commit)
 
+def branch(args):
+    data.new_branch(args.name)
+
 def show_ref(args):
     data.show_ref()
 
@@ -124,22 +130,18 @@ def viz_refs(args):
     dot = 'digraph commits {\n'
     oids = set()
     for ref, refname in data.iter_refs():
-         #print(refname, ref)
          dot += f'"{refname}" [shape=note]\n'
          dot += f'"{refname}" -> "{ref}"\n'
          oids.add(ref)
 
     for oid in base.iter_commits_and_parents(oids):
-        #print(oid)
         commit = base.get_commit(oid)
         dot += f'"{oid}" [shape=box style=filled label="{oid[:10]}"]\n'
     if commit.parent:
         #print('Parent', commit.parent)
         dot += f'"{oid}" -> "{commit.parent}"\n'
     dot += '}'
-    #print(dot)
 
-    # TODO visualize refs
     with subprocess.Popen(
             ['dot', '-Tpng', '/dev/stdin'],
             stdin=subprocess.PIPE) as proc:
