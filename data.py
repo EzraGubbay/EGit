@@ -1,5 +1,6 @@
 import os, sys, shutil
 import hashlib
+from collections import namedtuple
 
 GIT_DIR = '.egit'
 OBJ_DIR = os.path.join(GIT_DIR, 'objects')
@@ -13,6 +14,8 @@ COLORS = {
     'YELLOW': '\033[33m',
     'RESET': '\033[0m'
 }
+
+RefValue = namedtuple('RefValue', ['symbolic', 'value'])
 
 def init():
     exists = False
@@ -28,7 +31,7 @@ def init():
     os.makedirs(os.path.join(REF_DIR, 'tags'))
 
     # create files
-    update_head("master")
+    update_ref('HEAD', RefValue(symbolic=False, value='ref: refs/heads/master'))
 
     # Print appropriate message to console
     sys.stdout.write(f'{"Rei" if exists else "I"}nitialized empty repository in {os.getcwd()}/{GIT_DIR}\n')
@@ -116,33 +119,42 @@ def rmobj(oid):
 
 # Changes the object ID of the provided reference to the provided value. If the reference does not exist,
 # it creates one.
-def update_ref(ref, oid):
+def update_ref(ref, oid, deref=True):
+    ref = _get_ref_internal(ref, deref)[0]
+    assert oid.value
+    if oid.symbolic:
+        value = f'ref: {oid.value}'
+    else:
+        value = oid.value
     ref_path = os.path.join(GIT_DIR, ref)
+    os.makedirs(os.path.dirname(ref_path), exist_ok=True)
     with open(ref_path, 'w') as f:
-        f.write(f'{oid}\n')
+        f.write(f'{value}\n')
 
 # Returns the object ID associated with the provided reference (if it exists, else None).
-def get_ref(ref):
+def get_ref(ref, deref=True):
+    return _get_ref_internal(ref, deref)[1]
+
+def _get_ref_internal(ref, deref):
     ref_path = os.path.join(GIT_DIR, ref)
-    if os.path.exists(ref_path):
+    result = None
+    if os.path.isfile(ref_path):
         with open(ref_path, 'r') as f:
-            return f.read().strip()
-    else:
-        return None
+            result =  f.read().strip()
 
-# Returns the reference path to the current project commit under HEAD
-def get_head():
-    with open(HEAD, 'r') as f:
-        return f.read().split(' ')[1].strip()
-
-# Updates the reference path to the HEAD commit to the provided value.
-def update_head(ref):
-    with open(HEAD, 'w') as f:
-        f.write(f'ref: refs/heads/{ref}\n')
+    symbolic = bool(result) and result.startswith('ref:')
+    if symbolic:
+        result = result.split(':', 1)[1].strip()
+        if deref:
+            return _get_ref_internal(result, deref=True)
+    return ref, RefValue(symbolic=symbolic, value=result)
 
 def new_branch(name):
-    head_oid = get_ref(get_head())
-    update_ref(f'refs/heads/{name}', head_oid)
+    update_ref(f'refs/heads/{name}', get_ref('HEAD'))
+
+def current_branch():
+    with open(f'{GIT_DIR}/HEAD', 'r') as f:
+        return f.read().split(':', 1)[1].strip()
 
 # Iterates over all references (heads and tags) and yields each.
 def iter_refs():

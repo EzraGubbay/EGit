@@ -1,8 +1,13 @@
 import os
+import string
+from string import hexdigits
+
 import data
 import itertools
 from collections import namedtuple, deque
 import operator
+
+from data import RefValue
 
 # Retrieve list of ignored files
 ignore_list = data.get_ignore_list()
@@ -123,30 +128,52 @@ def commit(message):
 
     # Check if HEAD points to an empty reference. This will generally only happen if no commit has been made since
     # initialization.
-    if data.get_ref(data.get_head()) is not None:
-        content += f"commit {data.get_ref(data.get_head())}\n"
+    HEAD = data.get_ref('HEAD')
+    if HEAD.value is not None:
+        content += f"commit {HEAD.value}\n"
     content += f'\n{message}\n'
     commit_oid = data.hash_object('commit', content.encode(), write=True)
-    data.update_ref(data.get_head(), commit_oid)
+    data.update_ref('HEAD', RefValue(symbolic=False, value=commit_oid))
     return f"Created new commit: {commit_oid}"
 
 def checkout(refname):
-    commit_id = get_oid(refname)
-    tree = data.get_object_content(commit_id).decode().splitlines()[0]
-    tree_id = tree.split(' ', 1)[1]
-    read_tree(tree_id)
-    data.update_head(refname)
+    commit = get_commit(refname)
+    read_tree(commit.tree)
+    data.update_ref('HEAD', data.RefValue(symbolic=True, value=f'ref: refs/heads/{refname}'), deref=False)
+
+    if is_branch(refname):
+        HEAD = data.RefValue(symbolic=True, value=f'refs/heads/{refname}')
+    else:
+        HEAD = data.RefValue(symbolic=False, value=refname)
+    data.update_ref('HEAD', HEAD, deref=False)
+
+def is_branch(name):
+    return data.get_ref(f'refs/heads/{name}').value is not None
 
 def tag(tagname, commit_id):
-    data.update_ref(f'refs/tags/{tagname}', commit_id)
+    data.update_ref(f'refs/tags/{tagname}', commit_id, deref=True)
 
 def get_oid(tagname):
-    if tagname == 'HEAD': return data.get_ref(data.get_head())
-    return (data.get_ref(f'refs/tags/{tagname}') or data.get_ref(f'refs/heads/{tagname}')
-            or data.get_ref(f'{tagname}') or tagname)
+    if tagname == 'HEAD': return data.get_ref('HEAD').value
+    options = [
+        f'{tagname}',
+        f'refs/{tagname}',
+        f'refs/heads/{tagname}',
+        f'refs/tags/{tagname}',
+    ]
+    for option in options:
+        if data.get_ref(option, deref=False).value:
+            return data.get_ref(option).value
+
+    # Check if the provided tagname is actually an object ID
+    is_sha1 = all(char in string.hexdigits for char in tagname)
+    if len(tagname) == 40 and is_sha1:
+        return tagname
+
+    assert False, f'No such reference or object: {tagname}'
 
 def iter_commits_and_parents(oids):
-    oids = deque(get_oid(oids))
+    oids = deque({get_oid(oids)})
     visited = set()
 
     while oids:

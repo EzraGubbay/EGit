@@ -6,6 +6,7 @@ import base
 import textwrap
 
 from base import iter_commits_and_parents, get_oid
+from data import get_ref
 
 
 def main():
@@ -106,8 +107,7 @@ def commit(args):
     print(base.commit(args.message))
 
 def log(args):
-    #oid_set = base.get_oid({args.object})
-    for oid in iter_commits_and_parents({args.object}):
+    for oid in iter_commits_and_parents(args.object):
         commit = base.get_commit(oid)
         print(f'{data.COLORS["YELLOW"]}commit {oid}{data.COLORS["RESET"]}')
         print(textwrap.indent(commit.message, '     '))
