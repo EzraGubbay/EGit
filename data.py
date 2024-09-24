@@ -12,7 +12,10 @@ OBJ_TYPES = {
 }
 COLORS = {
     'YELLOW': '\033[33m',
-    'RESET': '\033[0m'
+    'GREEN': '\033[32m',
+    'HEAD': '\033[36m',
+    'RESET': '\033[0m',
+    'BOLD': '\033[1m'
 }
 
 RefValue = namedtuple('RefValue', ['symbolic', 'value'])
@@ -157,14 +160,17 @@ def current_branch():
         return f.read().split(':', 1)[1].strip()
 
 # Iterates over all references (heads and tags) and yields each.
-def iter_refs():
-    for ref in os.listdir(os.path.join(REF_DIR, 'heads')):
-        with open(os.path.join(REF_DIR, 'heads', ref), 'r') as f:
-            yield f.read().strip(), f'refs/heads/{ref}'
+def iter_refs(prefix='', deref=True):
+    refs = ['HEAD']
+    for root, _, filenames in os.walk(os.path.join(REF_DIR)):
+        root = os.path.relpath(root, GIT_DIR)
+        refs.extend(f'{root}/{filename}' for filename in filenames)
 
-    for ref in os.listdir(os.path.join(REF_DIR, 'tags')):
-        with open(os.path.join(REF_DIR, 'tags', ref), 'r') as f:
-            yield f.read().strip(), f'refs/tags/{ref}'
+    for ref in refs:
+        if not ref.startswith(prefix):
+            continue
+        else:
+            yield ref, get_ref(ref, deref=deref)
 
 # Prints list of all references (heads and tags) and their associated object IDs
 def show_ref():

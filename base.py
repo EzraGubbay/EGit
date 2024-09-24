@@ -1,7 +1,5 @@
 import os
 import string
-from string import hexdigits
-
 import data
 import itertools
 from collections import namedtuple, deque
@@ -150,8 +148,20 @@ def checkout(refname):
 def is_branch(name):
     return data.get_ref(f'refs/heads/{name}').value is not None
 
+def get_branch_name():
+    HEAD = data.get_ref('HEAD', deref=False)
+    if not HEAD.symbolic:
+        return None
+    HEAD = HEAD.value
+    assert HEAD.startswith('refs/heads/')
+    return os.path.relpath(HEAD, 'refs/heads')
+
+def iter_branches():
+    for branch, _ in data.iter_refs('refs/heads'):
+        yield os.path.relpath(branch, 'refs/heads')
+
 def tag(tagname, commit_id):
-    data.update_ref(f'refs/tags/{tagname}', commit_id, deref=True)
+    data.update_ref(f'refs/tags/{tagname}', data.RefValue(symbolic=False, value = commit_id), deref=True)
 
 def get_oid(tagname):
     if tagname == 'HEAD': return data.get_ref('HEAD').value
@@ -185,6 +195,20 @@ def iter_commits_and_parents(oids):
             yield oid
         commit = get_commit(oid)
         oids.appendleft(commit.parent)
+
+def get_working_directory():
+    tree = {}
+    for root, dirnames, filenames in os.walk('.'):
+        for filename in filenames:
+            path = os.path.relpath(f'{root}/{filename}')
+            if is_ignored(path) or not os.path.isfile(path):
+                continue
+            with open(path, 'rb') as f:
+                tree[path] = data.hash_object('blob', f.read(), write=True)
+    return tree
+
+def merge(oid):
+    pass
 
 
 def strip_nulls(line):
