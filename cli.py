@@ -7,7 +7,6 @@ import textwrap
 import diff
 import sys
 
-
 def main():
     load_dotenv()
     args = parse_args()
@@ -75,6 +74,10 @@ def parse_args():
     show_parser.set_defaults(func=show)
     show_parser.add_argument('object', type=oid, default='HEAD', nargs='?')
 
+    reset_parser = commands.add_parser('reset')
+    reset_parser.set_defaults(func=reset)
+    reset_parser.add_argument('commit', type=oid)
+
     diff_parser = commands.add_parser('diff')
     diff_parser.set_defaults(func=_diff)
     diff_parser.add_argument('commit', type=oid, default='HEAD', nargs='?')
@@ -82,6 +85,11 @@ def parse_args():
     merge_parser = commands.add_parser('merge')
     merge_parser.set_defaults(func=merge)
     merge_parser.add_argument('commit', type=oid)
+
+    merge_base_parser = commands.add_parser('merge-base')
+    merge_base_parser.set_defaults(func=merge_base)
+    merge_base_parser.add_argument('commit_1', type=oid)
+    merge_base_parser.add_argument('commit_2', type=oid)
 
     show_ref_parser = commands.add_parser('show-ref')
     show_ref_parser.set_defaults(func=show_ref)
@@ -122,14 +130,12 @@ def commit(args):
 
 def log(args):
     refs = {}
-    for refname, refvalue in data.iter_refs():
-        refs.setdefault(refvalue.value, []).append(refname.replace("refs/heads/", "")
-                                                   if "refs/heads/" in refname else f'tag: {refname.replace("refs/tags/", "")}')
+    for refname, ref in data.iter_refs():
+        refs.setdefault(ref.value, []).append(refname)
 
-    for oid in base.iter_commits_and_parents(args.object):
+    for oid in base.iter_commits_and_parents({args.object}):
         commit = base.get_commit(oid)
-        _print_commit(oid, commit, refs)
-        oid = commit.parent
+        _print_commit(oid, commit, refs.get(oid))
 
 def checkout(args):
     base.checkout(args.commit)
@@ -154,41 +160,59 @@ def status(args):
     else:
         print(f'HEAD detached at {HEAD[:10]}')
 
+    MERGE_VALUE = data.get_ref('MERGE_HEAD').value
+    if MERGE_VALUE:
+        print(f'Merging HEAD with {MERGE_VALUE[:10]}')
+
     head_tree = base.get_commit(HEAD).tree
     working_tree = base.get_working_directory()
-    changed = diff.iter_changed_files(base.get_tree(head_tree), working_tree)
-    if changed:
+
+    changed = {}
+    for path, action in diff.iter_changed_files(base.get_tree(head_tree), working_tree):
+        changed[path] = action
+    if changed and len(changed) > 0:
         print("Changes to be committed:")
-        for path, action in changed:
+        for path, action in changed.items():
             print(textwrap.indent(f'{data.COLORS["GREEN"]}{action}:   {path}{data.COLORS["RESET"]}', '      '))
 
 def _print_commit(oid, commit, refs=None):
+    refs_str = f' ({format_ref_str(refs)})' if refs else ''
+    print(f'{data.COLORS["YELLOW"]}commit {oid}{data.COLORS["RESET"]}{refs_str}\n')
+    print(textwrap.indent(commit.message, '    '))
+    print('')
+
+def format_ref_str(refs):
+    if not refs:
+        return ''
     BOLD_HEAD = f'{data.COLORS["BOLD"]}{data.COLORS["HEAD"]}'
     BOLD_REF = f'{data.COLORS["BOLD"]}{data.COLORS["GREEN"]}'
     RESET = f'{data.COLORS["RESET"]}'
-    ref_string = f' ({", ".join(refs[oid])})' if refs is not None and oid in refs else ''
-    ref_string = f' ({BOLD_HEAD}HEAD{RESET} -> {", ".join(refs[oid][1:])})' if 'HEAD' in ref_string else ref_string
 
-    print(f'{data.COLORS["YELLOW"]}commit {oid}{data.COLORS["RESET"]}{ref_string}')
-    print(textwrap.indent(commit.message, '     '))
-    print()
+    for index, ref in enumerate(refs[1:]):
+        refs[index + 1] = f'{BOLD_REF}{clean_ref_str(ref)}{RESET}'
+    if 'HEAD' in refs[0]:
+        refs[0] = f'{BOLD_HEAD}{refs[0]}{RESET} -> '
+        return refs[0] + ', '.join(refs[1:])
+    refs[0] = f'{BOLD_REF}{clean_ref_str(refs[0])}{RESET}'
+    return ', '.join(refs)
+
+
+def clean_ref_str(ref_str):
+    return ref_str.replace('refs/heads/', '').replace('refs/tags/', '')
 
 def show(args):
+    if not args.object:
+        return
     commit = base.get_commit(args.object)
-    parent = base.get_commit(commit.parent)
-    refs = {}
-    for refname, refvalue in data.iter_refs():
-        refs.setdefault(refvalue.value, []).append(refname.replace("refs/heads/", "")
-                                                   if "refs/heads/" in refname else f'tag: {refname.replace("refs/tags/", "")}')
-
-    for oid in base.iter_commits_and_parents(args.object):
-        if oid == args.object or oid == commit.parent:
-            _print_commit(oid, base.get_commit(oid), refs)
-
-    commit_tree = base.get_tree(commit.tree)
-    parent_tree = base.get_tree(parent.tree)
+    parent_tree = None
+    if commit.parents:
+        parent_tree = base.get_commit(commit.parents[0]).tree
+    result = diff.diff_trees(base.get_tree(parent_tree), base.get_tree(commit.tree))
     sys.stdout.flush()
-    sys.stdout.buffer.write(diff.diff_trees(commit_tree, parent_tree))
+    sys.stdout.buffer.write(result)
+
+def reset(args):
+    base.reset(args.commit)
 
 def _diff(args):
     tree = args.commit and base.get_commit(args.commit).tree
@@ -198,6 +222,8 @@ def _diff(args):
 def merge(args):
     base.merge(args.commit)
 
+def merge_base(args):
+    print(f'Commits share common parent: {base.merge_base(args.commit_1, args.commit_2)}')
 
 def show_ref(args):
     data.show_ref()
@@ -213,9 +239,8 @@ def viz_refs(args):
     for oid in base.iter_commits_and_parents(oids):
         commit = base.get_commit(oid)
         dot += f'"{oid}" [shape=box style=filled label="{oid[:10]}"]\n'
-    if commit.parent:
-        #print('Parent', commit.parent)
-        dot += f'"{oid}" -> "{commit.parent}"\n'
+        for parent in commit.parents:
+            dot += f'"{oid}" -> "{parent}"\n'
     dot += '}'
 
     with subprocess.Popen(

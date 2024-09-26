@@ -4,7 +4,7 @@ import data
 import itertools
 from collections import namedtuple, deque
 import operator
-
+import diff
 from data import RefValue
 
 # Retrieve list of ignored files
@@ -98,13 +98,13 @@ def _empty_current_directory():
             except (FileNotFoundError, OSError):
                 pass
 
-Commit = namedtuple('Commit', ['tree', 'parent', 'message'])
+Commit = namedtuple('Commit', ['tree', 'parents', 'message'])
 
 # Returns a Commit namedtuple of the commit associated with the given object ID.
 def get_commit(oid):
     # Resolve method parameter to the actual object ID, if it is a tagname for example.
     oid = get_oid(oid)
-    parent = None
+    parents = []
     commit = data.get_object_content(oid).decode()
     lines = iter(commit.splitlines())
     for line in itertools.takewhile(operator.truth, lines):
@@ -112,11 +112,11 @@ def get_commit(oid):
         if key == 'tree':
             tree = value
         elif key == 'commit':
-            parent = value
+            parents.append(value)
         else:
             assert False, f'Unknown object type: {key}'
     message = '\n'.join(lines)
-    return Commit(tree=tree, parent=parent, message=message)
+    return Commit(tree=tree, parents=parents, message=message)
 
 # Commit the working directory. Currently, commits its entirety. Writes the tree, creates commit object and updates HEAD
 # TODO: Commit only the contents of the index file.
@@ -127,8 +127,12 @@ def commit(message):
     # Check if HEAD points to an empty reference. This will generally only happen if no commit has been made since
     # initialization.
     HEAD = data.get_ref('HEAD')
+    MERGE_HEAD = data.get_ref('MERGE_HEAD')
     if HEAD.value is not None:
         content += f"commit {HEAD.value}\n"
+    if MERGE_HEAD.value is not None:
+        content += f"commit {MERGE_HEAD.value}\n"
+        data.delete_ref('MERGE_HEAD', deref=False)
     content += f'\n{message}\n'
     commit_oid = data.hash_object('commit', content.encode(), write=True)
     data.update_ref('HEAD', RefValue(symbolic=False, value=commit_oid))
@@ -183,7 +187,7 @@ def get_oid(tagname):
     assert False, f'No such reference or object: {tagname}'
 
 def iter_commits_and_parents(oids):
-    oids = deque({get_oid(oids)})
+    oids = deque({get_oid(oid) for oid in oids})
     visited = set()
 
     while oids:
@@ -194,7 +198,8 @@ def iter_commits_and_parents(oids):
             visited.add(oid)
             yield oid
         commit = get_commit(oid)
-        oids.appendleft(commit.parent)
+        oids.extendleft(commit.parents[:1])
+        oids.extend(commit.parents[1:])
 
 def get_working_directory():
     tree = {}
@@ -207,8 +212,40 @@ def get_working_directory():
                 tree[path] = data.hash_object('blob', f.read(), write=True)
     return tree
 
+def reset(oid):
+    data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
+
+def read_tree_merged(HEAD, other, base):
+    _empty_current_directory()
+    for path, blob in diff.merge_trees(
+            get_tree(HEAD), get_tree(other), get_tree(base)).items():
+        os.makedirs(f'./{os.path.dirname(path)}', exist_ok=True)
+        with open(path, 'wb') as f:
+            f.write(blob)
+
+
 def merge(oid):
-    pass
+    HEAD = data.get_ref('HEAD')
+    assert HEAD
+    base = merge_base(HEAD.value, oid)
+    if base == HEAD.value:
+        data.update_ref('HEAD', data.RefValue(symbolic=False, value=oid))
+        print("Fast-forward merge, no need to commit")
+        return
+    c_HEAD = get_commit('HEAD')
+    c_other = get_commit(oid)
+    c_base = get_commit(base)
+    data.update_ref('MERGE_HEAD', RefValue(symbolic=False, value=oid))
+    read_tree_merged(c_HEAD.tree, c_other.tree, c_base.tree)
+    print("Merged in working directory\nPlease commit")
+
+def merge_base(commit_1, commit_2):
+
+    for c1_parent in iter_commits_and_parents({commit_1}):
+        for c2_parent in iter_commits_and_parents({commit_2}):
+            if c2_parent == c1_parent:
+                return c1_parent
+    return None
 
 
 def strip_nulls(line):

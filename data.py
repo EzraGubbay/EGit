@@ -138,6 +138,10 @@ def update_ref(ref, oid, deref=True):
 def get_ref(ref, deref=True):
     return _get_ref_internal(ref, deref)[1]
 
+def delete_ref(ref, deref=True):
+    ref = _get_ref_internal(ref, deref)[0]
+    os.remove(f'{GIT_DIR}/{ref}')
+
 def _get_ref_internal(ref, deref):
     ref_path = os.path.join(GIT_DIR, ref)
     result = None
@@ -162,6 +166,8 @@ def current_branch():
 # Iterates over all references (heads and tags) and yields each.
 def iter_refs(prefix='', deref=True):
     refs = ['HEAD']
+    if get_ref('MERGE_HEAD').value:
+        refs.append('MERGE_HEAD')
     for root, _, filenames in os.walk(os.path.join(REF_DIR)):
         root = os.path.relpath(root, GIT_DIR)
         refs.extend(f'{root}/{filename}' for filename in filenames)
